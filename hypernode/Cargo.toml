@@ -1,0 +1,31 @@
+[package]
+name = "hypernode"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "hypernode"
+path = "src/bin/main.rs"
+
+[dependencies]
+rift-lib = { path ="../circuits/lib" }
+rift-core = { path ="../circuits/core" }
+tokio = { version = "1.40.0", features = ["full"] }
+alloy = { version = "0.2", features = ["full", "node-bindings"] }
+futures-util = "0.3"
+eyre = "0.6"
+clap = { version = "4.0", features = ["derive", "env"] }
+dotenv = "0.15.0"
+futures = "0.3.30"
+log = "0.4.22"
+env_logger = "0.11.5"
+reqwest = "0.12.7"
+serde_json = "1.0.127"
+rand = "0.8.5"
+hex = "0.4.3"
+bitcoin = "0.32.2"
+crypto-bigint = { git = "https://github.com/sp1-patches/RustCrypto-bigint", branch = "patch-v0.5.5" }
+chrono = "0.4.38"
+serde = "1.0.210"
+thiserror = "1.0.64"
+json-patch = "2.0.0"
