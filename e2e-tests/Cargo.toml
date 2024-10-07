@@ -1,0 +1,23 @@
+[package]
+name = "test_utils"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "devnet"
+path = "src/bin/devnet.rs"
+
+[dependencies]
+alloy = { version = "0.2.1", features = ["full", "node-bindings"] }
+bitcoind = "0.36.0"
+bitcoin = { version = "0.32.2", default-features = false }
+eyre = "0.6.12"
+tokio = {version="1.40.0", features=["full"]}
+hypernode = { path = "../hypernode" }
+rift-core = { path = "../circuits/core" }
+rift-lib = { path = "../circuits/lib" }
+log = "0.4.22"
+env_logger = "0.11.5"
+chrono = "0.4.38"
+futures = "0.3.30"
+futures-util = "0.3.30"

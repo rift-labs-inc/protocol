@@ -1,0 +1,3 @@
+pub const RELEASER_REWARD_USD: u64 = 1;
+pub const PROVER_REWARD_USD: u64 = 2;
+pub const MINIMUM_CONFIRMATION_DELTA: u8 = 1;

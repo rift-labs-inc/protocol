@@ -1,0 +1,12 @@
+.env
+cache
+*__pycache__/
+debug_file.json
+
+# Rust
+*target/
+
+
+# Added by cargo
+
+/target
