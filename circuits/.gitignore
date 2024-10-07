@@ -1,0 +1,31 @@
+**.DS_Store
+**/target
+**/proofs
+**/__pycache__
+**Prover.toml
+**Verifier.toml
+.env
+cache
+.noir_cache
+artifact_cache
+tests/data
+
+# Cargo build
+**/target
+
+# Cargo config
+.cargo
+
+# Profile-guided optimization
+/tmp
+pgo-data.profdata
+
+# MacOS nuisances
+.DS_Store
+
+# Proofs
+**/proof-with-pis.json
+**/proof-with-io.json
+
+# Env
+.env

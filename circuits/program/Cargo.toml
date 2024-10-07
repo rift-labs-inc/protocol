@@ -1,0 +1,9 @@
+[package]
+version = "0.1.0"
+name = "rift-program"
+edition = "2021"
+
+[dependencies]
+alloy-sol-types = { workspace = true }
+sp1-zkvm = { workspace = true }
+rift-core = { path = "../core" }

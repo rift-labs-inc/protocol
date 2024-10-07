@@ -1,0 +1,45 @@
+[package]
+name = "tests"
+version = "0.1.0"
+edition = "2021"
+
+[[test]]
+name = "tx_hash"
+path = "src/tx_hash/main.rs"
+
+[[test]]
+name = "sha256_merkle"
+path = "src/sha256_merkle/main.rs"
+
+[[test]]
+name = "bitcoin"
+path = "src/bitcoin/main.rs"
+
+[[test]]
+name = "lp_hash"
+path = "src/lp_hash/main.rs"
+
+[[test]]
+name = "payment"
+path = "src/payment/main.rs"
+
+[[test]]
+name = "giga"
+path = "src/giga/main.rs"
+
+
+[dependencies]
+rift-lib = { path = "../lib" }
+rift-core = { path = "../core" }
+hex-literal = {  workspace = true }
+serde_json = { workspace = true }
+serde = { workspace = true }
+bitcoin = { workspace = true }
+sha2 = { workspace = true }
+crypto-bigint = { workspace = true }
+sp1-sdk = { workspace = true }
+clap = { workspace = true }
+bincode = { workspace = true }
+
+[build-dependencies]
+sp1-helper = { workspace = true }
