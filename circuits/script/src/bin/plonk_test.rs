@@ -8,14 +8,11 @@ use hex_literal::hex;
 use rift_core::lp::LiquidityReservation;
 
 use rift_core::CircuitInput;
-use rift_lib::proof::build_transaction_proof_input;
+use rift_lib::proof::{self, build_transaction_proof_input};
 use rift_lib::{get_retarget_height_from_block_height, load_hex_bytes, to_hex_string};
 
 use clap::Parser;
 use sp1_sdk::{ProverClient, SP1Stdin};
-
-/// The ELF (executable and linkable format) file for the Succinct RISC-V zkVM.
-pub const MAIN_ELF: &[u8] = include_bytes!("../../../elf/riscv32im-succinct-zkvm-elf");
 
 fn get_test_case_circuit_input() -> CircuitInput {
     let safe_chainwork = U256::from_be_bytes(hex!(
@@ -109,12 +106,12 @@ fn main() {
 
     if args.execute {
         // Execute the program
-        let (_output, report) = client.execute(MAIN_ELF, stdin).run().unwrap();
+        let (_output, report) = client.execute(proof::MAIN_ELF, stdin).run().unwrap();
         println!("Program executed successfully.");
         println!("Number of cycles: {}", report.total_instruction_count());
     } else {
         // Setup the program for proving.
-        let (pk, vk) = client.setup(MAIN_ELF);
+        let (pk, vk) = client.setup(proof::MAIN_ELF);
 
         // Generate the proof
         let proof = client

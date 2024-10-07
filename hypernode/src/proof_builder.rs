@@ -6,7 +6,6 @@ use rift_lib;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Semaphore};
 
-use crate::constants::MAIN_ELF;
 use crate::core::ThreadSafeStore;
 use crate::error::HypernodeError;
 use crate::proof_broadcast::{self, ProofBroadcastQueue};
@@ -175,8 +174,7 @@ impl ProofGenerationQueue {
 
         let proof_gen_timer = std::time::Instant::now();
         let result = tokio::task::spawn_blocking(move || {
-            let (public_values_string, execution_report) =
-                rift_lib::proof::execute(circuit_input, MAIN_ELF);
+            let (public_values_string, execution_report) = rift_lib::proof::execute(circuit_input);
             info!(
                 "Reservation {} executed with {} cycles",
                 item.reservation_id,
@@ -185,8 +183,7 @@ impl ProofGenerationQueue {
             if mock_proof_gen {
                 (Vec::new(), public_values_string)
             } else {
-                let proof =
-                    rift_lib::proof::generate_plonk_proof(circuit_input, MAIN_ELF, Some(true));
+                let proof = rift_lib::proof::generate_plonk_proof(circuit_input, Some(true));
                 let solidity_proof_bytes = proof.bytes();
                 (solidity_proof_bytes, public_values_string)
             }

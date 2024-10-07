@@ -11,7 +11,16 @@ use crate::transaction::{get_chainworks, serialize_no_segwit};
 use crate::{generate_merkle_proof_and_root, AsRiftOptimizedBlock};
 use rift_core::{CircuitInput, CircuitPublicValues};
 
-use sp1_sdk::{ExecutionReport, ProverClient, SP1Stdin};
+use sp1_sdk::{ExecutionReport, HashableKey, ProverClient, SP1Stdin, SP1VerifyingKey};
+
+/// The ELF (executable and linkable format) file for the Succinct RISC-V zkVM.
+pub const MAIN_ELF: &[u8] = include_bytes!("../../elf/riscv32im-succinct-zkvm-elf");
+
+pub fn compute_circuit_hash() -> String {
+    let client = ProverClient::new();
+    let (_, vk) = client.setup(MAIN_ELF);
+    vk.bytes32().trim_start_matches("0x").to_string()
+}
 
 pub fn build_transaction_proof_input(
     order_nonce: &[u8; 32],
@@ -165,12 +174,8 @@ pub fn build_block_proof_input(
     )
 }
 
-/// We can't assume that the ELF file will always be available at this location
-//pub const MAIN_ELF: &[u8] = include_bytes!("../../elf/riscv32im-succinct-zkvm-elf");
-
 pub fn generate_plonk_proof(
     circuit_input: CircuitInput,
-    program_elf: &[u8],
     verify: Option<bool>,
 ) -> sp1_sdk::SP1ProofWithPublicValues {
     // Setup the prover client.
@@ -179,7 +184,7 @@ pub fn generate_plonk_proof(
     let mut stdin = SP1Stdin::new();
     stdin.write(&circuit_input);
     // Setup the program for proving.
-    let (pk, vk) = client.setup(program_elf);
+    let (pk, vk) = client.setup(MAIN_ELF);
     // Generate the proof
     let proof = client
         .prove(&pk, stdin)
@@ -195,10 +200,10 @@ pub fn generate_plonk_proof(
     proof
 }
 
-pub fn execute(circuit_input: CircuitInput, program_elf: &[u8]) -> (String, ExecutionReport) {
+pub fn execute(circuit_input: CircuitInput) -> (String, ExecutionReport) {
     let client = ProverClient::new();
     let mut stdin = SP1Stdin::new();
     stdin.write(&circuit_input);
-    let (public_values, report) = client.execute(program_elf, stdin).run().unwrap();
+    let (public_values, report) = client.execute(MAIN_ELF, stdin).run().unwrap();
     (public_values.raw(), report)
 }
