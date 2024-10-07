@@ -16,6 +16,16 @@
 | `lib/`  | Client Library | Client-facing library for creating proofs|
 | `tests/`  | Testing Suite | Unit and Integration tests |
 
+### Build SP1 Program
+```sh
+./build-elf.sh
+```
+
+### Compute the Verification Key Hash
+
+```sh
+cargo run --release --bin vkey
+```
 
 ### Run Unit Tests
 ```sh
@@ -39,15 +49,4 @@ cargo run --release --bin plonk_test -- --execute
 #### Proof Gen
 ```sh
 cargo run --release --bin plonk_test
-```
-
-### Build SP1 Program
-```sh
-cd program && cargo prove build && cd ..
-```
-
-### Compute the Verification Key
-
-```sh
-cargo run --release --bin vkey
 ```
