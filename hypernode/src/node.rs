@@ -3,9 +3,9 @@ use crate::core::{
     EvmHttpProvider, EvmWebsocketProvider, RiftExchange, RiftExchangeWebsocket, ThreadSafeStore,
 };
 use crate::error::HypernodeError;
-use crate::{btc_indexer, evm_indexer, proof_broadcast, proof_builder};
+use crate::{btc_indexer, btc_rpc, evm_indexer, proof_broadcast, proof_builder};
+use crate::{evm_block_trigger, HypernodeArgs};
 use crate::{hyper_err, Result};
-use crate::{releaser, HypernodeArgs};
 use alloy::{
     network::EthereumWallet,
     providers::{ProviderBuilder, WsConnect},
@@ -71,6 +71,8 @@ pub async fn run(args: HypernodeArgs) -> Result<()> {
         ),
     });
 
+    let btc_rpc = Arc::new(btc_rpc::BitcoinRpcClient::new(&args.btc_rpc));
+
     let proof_broadcast_queue = Arc::new(proof_broadcast::ProofBroadcastQueue::new(
         Arc::clone(&safe_store),
         Arc::clone(&flashbots_provider),
@@ -85,7 +87,7 @@ pub async fn run(args: HypernodeArgs) -> Result<()> {
         args.proof_gen_concurrency,
     ));
 
-    let release_queue = Arc::new(releaser::ReleaserQueue::new(
+    let trigger = Arc::new(evm_block_trigger::EvmBlockTrigger::new(
         Arc::clone(&flashbots_provider),
         Arc::clone(&contract),
         args.evm_ws_rpc.as_ref(),
@@ -108,7 +110,7 @@ pub async fn run(args: HypernodeArgs) -> Result<()> {
     let synced_reservation_evm_height = evm_indexer::sync_reservations(
         Arc::clone(&contract),
         Arc::clone(&safe_store),
-        Arc::clone(&release_queue),
+        Arc::clone(&trigger),
         start_evm_block_height,
         args.evm_rpc_concurrency,
     )
@@ -127,13 +129,13 @@ pub async fn run(args: HypernodeArgs) -> Result<()> {
     tokio::try_join!(
         evm_indexer::exchange_event_listener(
             Arc::clone(&contract),
-            Arc::clone(&release_queue),
+            Arc::clone(&trigger),
             synced_reservation_evm_height,
             synced_block_header_evm_height,
             Arc::clone(&safe_store)
         ),
         btc_indexer::block_listener(
-            &args.btc_rpc,
+            Arc::clone(&btc_rpc),
             start_btc_block_height,
             args.btc_polling_interval,
             Arc::clone(&safe_store),
@@ -145,4 +147,3 @@ pub async fn run(args: HypernodeArgs) -> Result<()> {
 
     Ok(())
 }
-

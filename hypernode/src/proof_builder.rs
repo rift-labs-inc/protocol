@@ -1,4 +1,5 @@
 use alloy::primitives::U256;
+use bitcoin::Block;
 use log::{error, info};
 use rift_core::btc_light_client::AsLittleEndianBytes;
 use rift_core::lp::LiquidityReservation;
@@ -37,13 +38,38 @@ pub fn sats_to_wei(sats_amount: U256, wei_sats_exchange_rate: U256) -> U256 {
 }
 
 #[derive(Debug, Clone)]
-pub struct ProofGenerationInput {
-    reservation_id: U256,
+pub enum ProofGenerationInput {
+    Reservation {
+        reservation_id: U256,
+    },
+    BlockProof {
+        safe_chainwork: U256,
+        safe_block_height: u64,
+        blocks: Vec<Block>,
+        retarget_block: Block,
+        retarget_block_height: u64,
+    },
 }
 
 impl ProofGenerationInput {
-    pub fn new(reservation_id: U256) -> Self {
-        ProofGenerationInput { reservation_id }
+    pub fn new_reservation(reservation_id: U256) -> Self {
+        ProofGenerationInput::Reservation { reservation_id }
+    }
+
+    pub fn new_block_proof(
+        safe_chainwork: U256,
+        safe_block_height: u64,
+        blocks: Vec<Block>,
+        retarget_block: Block,
+        retarget_block_height: u64,
+    ) -> Self {
+        ProofGenerationInput::BlockProof {
+            safe_chainwork,
+            safe_block_height,
+            blocks,
+            retarget_block,
+            retarget_block_height,
+        }
     }
 }
 
@@ -123,10 +149,47 @@ impl ProofGenerationQueue {
         proof_broadcast_queue: Arc<ProofBroadcastQueue>,
         mock_proof_gen: bool,
     ) -> Result<()> {
+        match item {
+            ProofGenerationInput::Reservation { reservation_id } => {
+                Self::process_reservation(
+                    reservation_id,
+                    mock_proof_gen,
+                    store,
+                    proof_broadcast_queue,
+                )
+                .await
+            }
+            ProofGenerationInput::BlockProof {
+                safe_chainwork,
+                safe_block_height,
+                blocks,
+                retarget_block,
+                retarget_block_height,
+            } => {
+                Self::process_block_proof(
+                    safe_chainwork,
+                    safe_block_height,
+                    blocks,
+                    retarget_block,
+                    retarget_block_height,
+                    mock_proof_gen,
+                    proof_broadcast_queue,
+                )
+                .await
+            }
+        }
+    }
+
+    async fn process_reservation(
+        reservation_id: U256,
+        mock_proof_gen: bool,
+        store: Arc<ThreadSafeStore>,
+        proof_broadcast_queue: Arc<ProofBroadcastQueue>,
+    ) -> Result<()> {
         let reservation_metadata = store
-            .with_lock(|store| store.get(item.reservation_id).cloned())
+            .with_lock(|store| store.get(reservation_id).cloned())
             .await
-            .ok_or_else(|| hyper_err!(Store, "Reservation not found: {}", item.reservation_id))?;
+            .ok_or_else(|| hyper_err!(Store, "Reservation not found: {}", reservation_id))?;
 
         let order_nonce = reservation_metadata
             .reservation
@@ -177,7 +240,7 @@ impl ProofGenerationQueue {
             let (public_values_string, execution_report) = rift_lib::proof::execute(circuit_input);
             info!(
                 "Reservation {} executed with {} cycles",
-                item.reservation_id,
+                reservation_id,
                 execution_report.total_instruction_count()
             );
             if mock_proof_gen {
@@ -194,7 +257,7 @@ impl ProofGenerationQueue {
         let (solidity_proof_bytes, public_values_string) = result;
         info!(
             "Proof generation for reservation_id: {:?} took: {:?}",
-            item.reservation_id,
+            reservation_id,
             proof_gen_timer.elapsed()
         );
 
@@ -205,18 +268,79 @@ impl ProofGenerationQueue {
 
         store
             .with_lock(|store| {
-                store.update_proof_data(item.reservation_id, solidity_proof_bytes, public_inputs)
+                store.update_proof_data(reservation_id, solidity_proof_bytes, public_inputs)
             })
             .await;
 
-        proof_broadcast_queue.add(proof_broadcast::ProofBroadcastInput::new(
-            item.reservation_id,
+        proof_broadcast_queue.add(proof_broadcast::ProofBroadcastInput::new_reservation(
+            reservation_id,
         ))?;
 
-        info!(
-            "Finished processing reservation_id: {:?}",
-            item.reservation_id
+        info!("Finished processing reservation_id: {:?}", reservation_id);
+        Ok(())
+    }
+
+    async fn process_block_proof(
+        safe_chainwork: U256,
+        safe_block_height: u64,
+        blocks: Vec<Block>,
+        retarget_block: Block,
+        retarget_block_height: u64,
+        mock_proof_gen: bool,
+        proof_broadcast_queue: Arc<ProofBroadcastQueue>,
+    ) -> Result<()> {
+        let circuit_input = rift_lib::proof::build_block_proof_input(
+            SP1OptimizedU256::from_be_slice(&safe_chainwork.to_be_bytes::<32>()),
+            safe_block_height,
+            &blocks,
+            &retarget_block,
+            retarget_block_height,
         );
+
+        let proof_gen_timer = std::time::Instant::now();
+        let result = tokio::task::spawn_blocking(move || {
+            let (public_values_string, execution_report) = rift_lib::proof::execute(circuit_input);
+            info!(
+                "Block proof executed with {} cycles",
+                execution_report.total_instruction_count()
+            );
+            if mock_proof_gen {
+                (Vec::new(), public_values_string)
+            } else {
+                let proof = rift_lib::proof::generate_plonk_proof(circuit_input, Some(true));
+                let solidity_proof_bytes = proof.bytes();
+                (solidity_proof_bytes, public_values_string)
+            }
+        })
+        .await
+        .map_err(|e| {
+            hyper_err!(
+                ProofGeneration,
+                "Block proof generation task panicked: {}",
+                e
+            )
+        })?;
+
+        let (solidity_proof_bytes, public_values_string) = result;
+        info!(
+            "Block proof generation took: {:?}",
+            proof_gen_timer.elapsed()
+        );
+
+        let public_inputs = hex::decode(public_values_string.clone().trim_start_matches("0x"))
+            .map_err(|e| hyper_err!(ProofGeneration, "Failed to decode public inputs: {}", e))?;
+
+        info!("Public Inputs Encoded: {:?}", public_values_string);
+
+        proof_broadcast_queue.add(proof_broadcast::ProofBroadcastInput::new_block_proof(
+            safe_chainwork,
+            safe_block_height,
+            blocks,
+            retarget_block,
+            retarget_block_height,
+            solidity_proof_bytes,
+            public_inputs,
+        ))?;
         Ok(())
     }
 }

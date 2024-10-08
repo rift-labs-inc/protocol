@@ -12,48 +12,48 @@ use std::fmt::Debug;
 use std::sync::Arc;
 
 #[derive(Debug)]
-pub struct ReleaserRequestInput {
+pub struct EvmBlockTriggerRequestInput {
     reservation_id: U256,
     unlock_timestamp: u64,
 }
 
-impl ReleaserRequestInput {
+impl EvmBlockTriggerRequestInput {
     pub fn new(reservation_id: U256, unlock_timestamp: u64) -> Self {
-        ReleaserRequestInput {
+        EvmBlockTriggerRequestInput {
             reservation_id,
             unlock_timestamp,
         }
     }
 }
 
-pub struct ReleaserQueue {
-    release_queue: Arc<Mutex<Vec<ReleaserRequestInput>>>,
+pub struct EvmBlockTrigger {
+    trigger_queue: Arc<Mutex<Vec<EvmBlockTriggerRequestInput>>>,
     flashbots_provider: Arc<Option<EvmHttpProvider>>,
     contract: Arc<RiftExchangeWebsocket>,
     debug_url: String,
 }
 
-impl ReleaserQueue {
+impl EvmBlockTrigger {
     pub fn new(
         flashbots_provider: Arc<Option<EvmHttpProvider>>,
         contract: Arc<RiftExchangeWebsocket>,
         debug_url: &str,
     ) -> Arc<Self> {
-        let queue = Arc::new(Self {
-            release_queue: Arc::new(Mutex::new(Vec::new())),
+        let trigger = Arc::new(Self {
+            trigger_queue: Arc::new(Mutex::new(Vec::new())),
             flashbots_provider,
             contract,
             debug_url: debug_url.to_string(),
         });
 
-        ReleaserQueue::trigger_release_on_blocks(Arc::clone(&queue)).unwrap();
+        EvmBlockTrigger::trigger_on_blocks(Arc::clone(&trigger)).unwrap();
 
-        queue
+        trigger
     }
 
-    pub async fn add(&self, req: ReleaserRequestInput) -> Result<()> {
-        let mut release_queue_handle = self.release_queue.lock().await;
-        if !release_queue_handle
+    pub async fn add(&self, req: EvmBlockTriggerRequestInput) -> Result<()> {
+        let mut trigger_queue_handle = self.trigger_queue.lock().await;
+        if !trigger_queue_handle
             .iter()
             .any(|r| r.reservation_id == req.reservation_id)
         {
@@ -61,7 +61,7 @@ impl ReleaserQueue {
                 "Added new release request for reservation ID: {}",
                 &req.reservation_id
             );
-            release_queue_handle.push(req);
+            trigger_queue_handle.push(req);
         } else {
             info!(
                 "Release request for reservation ID: {} already exists in the queue",
@@ -71,15 +71,14 @@ impl ReleaserQueue {
         Ok(())
     }
 
-    fn trigger_release_on_blocks(queue: Arc<Self>) -> Result<()> {
+    fn trigger_on_blocks(trigger: Arc<Self>) -> Result<()> {
         tokio::spawn(async move {
-            let provider = queue.contract.provider();
+            let provider = trigger.contract.provider();
             let sub = provider.subscribe_blocks().await.unwrap();
 
             let mut stream = sub.into_stream();
             while let Some(block) = stream.next().await {
-                // Here you can add the logic to process the queue based on the new block
-                match queue.process_queue(block).await {
+                match trigger.process_queue(block).await {
                     Ok(_) => {}
                     Err(e) => {
                         log::error!("Error processing queue: {:?}", e);
@@ -113,7 +112,7 @@ impl ReleaserQueue {
 
     async fn process_queue(&self, block: Block<Transaction>) -> Result<()> {
         let current_timestamp = block.header.timestamp;
-        let mut queue = self.release_queue.lock().await;
+        let mut queue = self.trigger_queue.lock().await;
 
         // Separate ready and not ready items
         let (ready, not_ready): (Vec<_>, Vec<_>) = queue

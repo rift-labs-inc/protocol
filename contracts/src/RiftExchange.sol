@@ -125,6 +125,7 @@ contract RiftExchange is BlockHashStorageUpgradeable, OwnableUpgradeable, UUPSUp
     event SwapComplete(uint256 swapReservationIndex, SwapReservation swapReservation, uint256 protocolFee);
     event LiquidityWithdrawn(uint256 indexed globalVaultIndex, uint192 amountWithdrawn, uint256 remainingBalance);
     event ProtocolFeeUpdated(uint8 newProtocolFeeBP);
+    event BitcoinChainSynced(uint256 oldBlockHeight, uint256 newBlockHeight);
 
     // --------- MODIFIERS --------- //
     modifier newDepositsNotPaused() {
@@ -403,6 +404,30 @@ contract RiftExchange is BlockHashStorageUpgradeable, OwnableUpgradeable, UUPSUp
         emit LiquidityReserved(reservationOwner, getReservationLength() - 1, orderNonce);
     }
 
+    function buildBlockProofPublicInputs(
+        uint32 safeBlockHeight,
+        uint64 proposedBlockHeight,
+        uint64 confirmationBlockHeight,
+        bytes32[] memory blockHashes,
+        uint256[] memory blockChainworks
+    ) public view returns (ProofPublicInputs memory) {
+        return
+            ProofPublicInputs({
+                natural_txid: bytes32(0),
+                merkle_root: bytes32(0),
+                lp_reservation_hash: bytes32(0),
+                order_nonce: bytes32(0),
+                lp_count: 0,
+                retarget_block_hash: getBlockHash(calculateRetargetHeight(safeBlockHeight)),
+                safe_block_height: safeBlockHeight,
+                safe_block_height_delta: proposedBlockHeight - safeBlockHeight,
+                confirmation_block_height_delta: confirmationBlockHeight - proposedBlockHeight,
+                block_hashes: blockHashes,
+                block_chainworks: blockChainworks,
+                is_transaction_proof: false
+            });
+    }
+
     function buildPublicInputs(
         uint256 swapReservationIndex,
         bytes32 bitcoinTxId,
@@ -536,16 +561,12 @@ contract RiftExchange is BlockHashStorageUpgradeable, OwnableUpgradeable, UUPSUp
     ) external {
         // [0] craft public inputs
         bytes memory publicInputs = abi.encode(
-            buildPublicInputs(
-                0,
-                bytes32(0),
-                bytes32(0),
+            buildBlockProofPublicInputs(
                 safeBlockHeight,
                 proposedBlockHeight,
                 confirmationBlockHeight,
                 blockHashes,
-                blockChainworks,
-                false
+                blockChainworks
             )
         );
 
@@ -554,6 +575,8 @@ contract RiftExchange is BlockHashStorageUpgradeable, OwnableUpgradeable, UUPSUp
 
         // [2] add verified blocks to block hash storage contract
         addBlock(safeBlockHeight, proposedBlockHeight, confirmationBlockHeight, blockHashes, blockChainworks);
+
+        emit BitcoinChainSynced(safeBlockHeight, confirmationBlockHeight);
     }
 
     // --------- ONLY OWNER --------- //

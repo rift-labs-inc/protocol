@@ -12,15 +12,15 @@ use alloy::{
 use bitcoin::hex::DisplayHex;
 use futures::stream::{self, TryStreamExt};
 use futures_util::StreamExt;
+use log::{error, info};
 use std::time::Instant;
 use std::{collections::HashMap, collections::HashSet, sync::Arc};
 use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
-use log::{info, error};
 
 use crate::core::{EvmHttpProvider, RiftExchangeWebsocket};
 use crate::error::HypernodeError;
-use crate::releaser::{self, ReleaserQueue};
+use crate::evm_block_trigger::{self, EvmBlockTrigger};
 use crate::{
     constants::HEADER_LOOKBACK_LIMIT,
     core::{
@@ -297,7 +297,7 @@ pub async fn find_block_height_from_time(
 pub async fn sync_reservations(
     contract: Arc<RiftExchangeWebsocket>,
     safe_store: Arc<ThreadSafeStore>,
-    release_queue: Arc<ReleaserQueue>,
+    trigger: Arc<EvmBlockTrigger>,
     start_block: u64,
     rpc_concurrency: usize,
 ) -> Result<u64> {
@@ -415,8 +415,8 @@ pub async fn sync_reservations(
         .filter(|(id, _)| reservations_in_challenge.contains(id))
     {
         let unlock_timestamp = metadata.reservation.liquidityUnlockedTimestamp;
-        release_queue
-            .add(releaser::ReleaserRequestInput::new(
+        trigger
+            .add(evm_block_trigger::EvmBlockTriggerRequestInput::new(
                 *reservation_id,
                 unlock_timestamp,
             ))
@@ -428,7 +428,7 @@ pub async fn sync_reservations(
 
 pub async fn exchange_event_listener(
     contract: Arc<RiftExchangeWebsocket>,
-    release_queue: Arc<ReleaserQueue>,
+    trigger: Arc<EvmBlockTrigger>,
     mut start_index_block_height: u64,
     mut start_block_header_height: u64,
     active_reservations: Arc<ThreadSafeStore>,
@@ -438,11 +438,12 @@ pub async fn exchange_event_listener(
     loop {
         let result = try_exchange_event_listener(
             Arc::clone(&contract),
-            Arc::clone(&release_queue),
+            Arc::clone(&trigger),
             start_index_block_height,
             start_block_header_height,
             Arc::clone(&active_reservations),
-        ).await;
+        )
+        .await;
 
         match result {
             Ok((new_index_height, new_header_height)) => {
@@ -452,7 +453,10 @@ pub async fn exchange_event_listener(
                 info!("Event listener completed successfully. Restarting from block heights: index={}, header={}", start_index_block_height, start_block_header_height);
             }
             Err(e) => {
-                error!("Error in event listener: {}. Retrying in {:?}...", e, RETRY_DELAY);
+                error!(
+                    "Error in event listener: {}. Retrying in {:?}...",
+                    e, RETRY_DELAY
+                );
                 sleep(RETRY_DELAY).await;
             }
         }
@@ -461,7 +465,7 @@ pub async fn exchange_event_listener(
 
 async fn try_exchange_event_listener(
     contract: Arc<RiftExchangeWebsocket>,
-    release_queue: Arc<ReleaserQueue>,
+    trigger: Arc<EvmBlockTrigger>,
     start_index_block_height: u64,
     start_block_header_height: u64,
     active_reservations: Arc<ThreadSafeStore>,
@@ -566,7 +570,7 @@ async fn try_exchange_event_listener(
                     active_reservations.with_lock(|reservations_guard| {
                         reservations_guard.insert(swap_reservation_index, reservation_metadata.1.clone());
                     }).await;
-                    release_queue.add(releaser::ReleaserRequestInput::new(
+                    trigger.add(evm_block_trigger::EvmBlockTriggerRequestInput::new(
                         swap_reservation_index,
                         reservation_metadata.1.reservation.liquidityUnlockedTimestamp
                     )).await?;

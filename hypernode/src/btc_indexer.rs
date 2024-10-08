@@ -1,14 +1,18 @@
+use alloy::primitives::U256;
 use futures::stream::{StreamExt, TryStreamExt};
 use futures_util::stream;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use bitcoin::{hashes::Hash, hex::DisplayHex, opcodes::all::OP_RETURN, script::Builder, Block};
 use log::{debug, info};
 
 use crate::{
-    btc_rpc::BitcoinRpcClient, constants::CONFIRMATION_HEIGHT_DELTA, core::ThreadSafeStore,
-    error::HypernodeError, hyper_err, proof_builder, Result,
+    btc_rpc::BitcoinRpcClient,
+    constants::{CHECKPOINT_BLOCK_INTERVAL, CONFIRMATION_HEIGHT_DELTA},
+    core::ThreadSafeStore,
+    error::HypernodeError,
+    hyper_err, proof_builder, Result,
 };
 
 fn build_rift_inscription(order_nonce: [u8; 32]) -> Vec<u8> {
@@ -146,9 +150,10 @@ async fn analyze_reservations_for_sufficient_confirmations(
             confirmation_height, id
         );
 
+        let btc_rpc = rpc_client;
         let blocks: Vec<Block> = stream::iter(*safe_height..*confirmation_height + 1)
-            .map(|height| async move {
-                let block_hash = rpc_client.get_block_hash(height).await.map_err(|e| {
+            .map(move |height| async move {
+                let block_hash = btc_rpc.get_block_hash(height).await.map_err(|e| {
                     hyper_err!(
                         RpcError,
                         "Failed to get block hash for height {}: {}",
@@ -157,7 +162,7 @@ async fn analyze_reservations_for_sufficient_confirmations(
                     )
                 })?;
 
-                let block = rpc_client.get_block(&block_hash).await.map_err(|e| {
+                let block = btc_rpc.get_block(&block_hash).await.map_err(|e| {
                     hyper_err!(
                         RpcError,
                         "Failed to get block for hash {}: {}",
@@ -175,22 +180,22 @@ async fn analyze_reservations_for_sufficient_confirmations(
 
         let blocks = blocks.into_iter().collect::<Vec<_>>();
 
-        let block_hash = rpc_client
+        let block_hash = btc_rpc
             .get_block_hash(*safe_height)
             .await
             .map_err(|e| hyper_err!(RpcError, "Failed to get block hash: {}", e))?;
-        let safe_chainwork = rpc_client
+        let safe_chainwork = btc_rpc
             .get_chainwork(&block_hash)
             .await
             .map_err(|e| hyper_err!(RpcError, "Failed to get chainwork: {}", e))?;
 
         let retarget_height = safe_height - (safe_height % 2016);
 
-        let retarget_block_hash = rpc_client
+        let retarget_block_hash = btc_rpc
             .get_block_hash(retarget_height)
             .await
             .map_err(|e| hyper_err!(RpcError, "Failed to get retarget block hash: {}", e))?;
-        let retarget_block = rpc_client
+        let retarget_block = btc_rpc
             .get_block(&retarget_block_hash)
             .await
             .map_err(|e| hyper_err!(RpcError, "Failed to get retarget block: {}", e))?;
@@ -227,7 +232,9 @@ async fn analyze_reservations_for_sufficient_confirmations(
 
         // add it the proof gen queue
         info!("Adding reservation: {} to proof generation queue", id);
-        proof_gen_queue.add(proof_builder::ProofGenerationInput::new(id.clone()))?;
+        proof_gen_queue.add(proof_builder::ProofGenerationInput::new_reservation(
+            id.clone(),
+        ))?;
     }
 
     Ok(())
@@ -294,18 +301,61 @@ pub async fn find_block_height_from_time(
     Ok(check_block)
 }
 
+async fn download_blocks(
+    rpc: &BitcoinRpcClient,
+    start_height: u64,
+    end_height: u64,
+    max_concurrent_requests: usize,
+) -> Result<Vec<(u64, Block)>> {
+    let heights_to_download = start_height..=end_height;
+
+    info!(
+        "Downloading bitcoin blocks: {} -> {}",
+        start_height, end_height
+    );
+
+    let blocks_with_heights: Result<Vec<(u64, Block)>> = futures::stream::iter(heights_to_download)
+        .map(|height| async move {
+            let block_hash = rpc.get_block_hash(height).await.map_err(|e| {
+                hyper_err!(
+                    RpcError,
+                    "Failed to get block hash for height {}: {}",
+                    height,
+                    e
+                )
+            })?;
+            let block = rpc.get_block(&block_hash).await.map_err(|e| {
+                hyper_err!(
+                    RpcError,
+                    "Failed to get block for hash {}: {}",
+                    block_hash.to_hex_string(bitcoin::hex::Case::Lower),
+                    e
+                )
+            })?;
+            Ok((height, block))
+        })
+        .buffer_unordered(max_concurrent_requests)
+        .try_collect()
+        .await;
+
+    let mut blocks_with_heights = blocks_with_heights?;
+    blocks_with_heights.sort_by_key(|(height, _)| *height);
+
+    Ok(blocks_with_heights)
+}
+
 // analyzes every btc block in the range [start_block_height, current_height] for reservation
 // payments, once it's fully sync'd to the current tip, it will poll for new blocks every
 // polling_interval seconds
 pub async fn block_listener(
-    rpc_url: &str,
+    btc_rpc: Arc<BitcoinRpcClient>,
     start_block_height: u64,
     polling_interval: u64,
-    active_reservations: Arc<ThreadSafeStore>,
+    store: Arc<ThreadSafeStore>,
     proof_gen_queue: Arc<proof_builder::ProofGenerationQueue>,
     max_concurrent_requests: usize,
 ) -> Result<()> {
-    let rpc = Arc::new(BitcoinRpcClient::new(rpc_url));
+    let rpc = btc_rpc;
     let mut current_height = rpc
         .get_block_count()
         .await
@@ -314,69 +364,29 @@ pub async fn block_listener(
     let mut total_blocks_to_sync = current_height.saturating_sub(start_block_height);
     let mut fully_synced_logged = false;
 
+    let mut last_prove_blocks_time = Instant::now() - Duration::from_secs(600);
+    const PROVE_BLOCKS_INTERVAL: Duration = Duration::from_secs(600); // 10 minutes
+
     loop {
         if current_height > analyzed_height {
-            // Get the range of heights to download
-            let heights_to_download = (analyzed_height + 1)..=current_height;
-
-            info!(
-                "Downloading bitcoin blocks: {} -> {}",
+            let blocks_with_heights = download_blocks(
+                &rpc,
                 analyzed_height + 1,
-                current_height
-            );
-
-            // Download blocks concurrently
-            let blocks_with_heights: Result<Vec<(u64, Block)>> =
-                futures::stream::iter(heights_to_download)
-                    .map(|height| {
-                        let rpc = rpc.clone();
-                        async move {
-                            let block_hash = rpc.get_block_hash(height).await.map_err(|e| {
-                                hyper_err!(
-                                    RpcError,
-                                    "Failed to get block hash for height {}: {}",
-                                    height,
-                                    e
-                                )
-                            })?;
-                            let block = rpc.get_block(&block_hash).await.map_err(|e| {
-                                hyper_err!(
-                                    RpcError,
-                                    "Failed to get block for hash {}: {}",
-                                    block_hash.to_hex_string(bitcoin::hex::Case::Lower),
-                                    e
-                                )
-                            })?;
-                            Ok((height, block))
-                        }
-                    })
-                    .buffer_unordered(max_concurrent_requests)
-                    .try_collect()
-                    .await;
-
-            let blocks_with_heights = blocks_with_heights?;
-
-            // Sort blocks by height to ensure correct order
-            let mut blocks_with_heights = blocks_with_heights;
-            blocks_with_heights.sort_by_key(|(height, _)| *height);
+                current_height,
+                max_concurrent_requests,
+            )
+            .await?;
 
             for (height, block) in blocks_with_heights {
                 analyzed_height = height;
                 let current_timestamp = chrono::Utc::now().timestamp() as u64;
 
-                active_reservations
-                    .with_lock(|reservations_guard| {
-                        reservations_guard.drop_expired_reservations(current_timestamp)
-                    })
+                store
+                    .with_lock(|store| store.drop_expired_reservations(current_timestamp))
                     .await;
 
                 let sift_start = Instant::now();
-                analyze_block_for_payments(
-                    analyzed_height,
-                    &block,
-                    Arc::clone(&active_reservations),
-                )
-                .await?;
+                analyze_block_for_payments(analyzed_height, &block, Arc::clone(&store)).await?;
                 debug!(
                     "Analyzed bitcoin block: {} in {:?}",
                     analyzed_height,
@@ -386,7 +396,7 @@ pub async fn block_listener(
                 analyze_reservations_for_sufficient_confirmations(
                     analyzed_height,
                     &block,
-                    Arc::clone(&active_reservations),
+                    Arc::clone(&store),
                     &rpc,
                     Arc::clone(&proof_gen_queue),
                 )
@@ -428,6 +438,83 @@ pub async fn block_listener(
                 info!("Fully synced. Waiting for new bitcoin blocks...");
                 fully_synced_logged = true;
             }
+
+            // Now that we're synced, check if we need to call proveBlocks
+            let latest_contract_block_height = store
+                .with_lock(|store| {
+                    store
+                        .safe_contract_block_hashes
+                        .keys()
+                        .max()
+                        .cloned()
+                        .unwrap_or(0)
+                })
+                .await;
+            let latest_btc_block_height = rpc.get_block_count().await?;
+            if latest_btc_block_height.saturating_sub(latest_contract_block_height)
+                > CHECKPOINT_BLOCK_INTERVAL
+            {
+                let now = Instant::now();
+                if now.duration_since(last_prove_blocks_time) >= PROVE_BLOCKS_INTERVAL {
+                    info!(
+                        "Calling proveBlocks at height {}",
+                        latest_contract_block_height
+                    );
+                    let safe_height = latest_contract_block_height;
+                    let confirmation_height = latest_btc_block_height;
+
+                    let blocks_with_heights = download_blocks(
+                        &rpc,
+                        safe_height,
+                        confirmation_height,
+                        max_concurrent_requests,
+                    )
+                    .await?;
+
+                    info!("Downloaded {} blocks", blocks_with_heights.len());
+                    let blocks: Vec<Block> = blocks_with_heights
+                        .into_iter()
+                        .map(|(_, block)| block)
+                        .collect();
+
+                    let block_hash = rpc
+                        .get_block_hash(safe_height)
+                        .await
+                        .map_err(|e| hyper_err!(RpcError, "Failed to get block hash: {}", e))?;
+
+                    let safe_chainwork = rpc
+                        .get_chainwork(&block_hash)
+                        .await
+                        .map_err(|e| hyper_err!(RpcError, "Failed to get chainwork: {}", e))?;
+
+                    let retarget_height = safe_height - (safe_height % 2016);
+
+                    let retarget_block_hash =
+                        rpc.get_block_hash(retarget_height).await.map_err(|e| {
+                            hyper_err!(RpcError, "Failed to get retarget block hash: {}", e)
+                        })?;
+                    let retarget_block = rpc
+                        .get_block(&retarget_block_hash)
+                        .await
+                        .map_err(|e| hyper_err!(RpcError, "Failed to get retarget block: {}", e))?;
+
+                    info!(
+                        "Contract database is out of sync by {} blocks. Proving blocks...",
+                        latest_btc_block_height.saturating_sub(latest_contract_block_height)
+                    );
+
+                    proof_gen_queue.add(proof_builder::ProofGenerationInput::new_block_proof(
+                        U256::from_be_slice(&safe_chainwork),
+                        safe_height,
+                        blocks,
+                        retarget_block,
+                        retarget_height,
+                    ))?;
+
+                    last_prove_blocks_time = now;
+                }
+            }
+
             // Sleep and try again
             tokio::time::sleep(tokio::time::Duration::from_secs(polling_interval)).await;
         }

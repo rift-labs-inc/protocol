@@ -3,11 +3,11 @@ pub mod btc_rpc;
 pub mod constants;
 pub mod core;
 pub mod error;
+pub mod evm_block_trigger;
 pub mod evm_indexer;
 pub mod node;
 pub mod proof_broadcast;
 pub mod proof_builder;
-pub mod releaser;
 
 use clap::Parser;
 
@@ -70,4 +70,3 @@ pub struct HypernodeArgs {
     #[arg(short, long, env)]
     pub flashbots_relay_rpc: Option<String>,
 }
-

@@ -11,7 +11,7 @@ use crate::transaction::{get_chainworks, serialize_no_segwit};
 use crate::{generate_merkle_proof_and_root, AsRiftOptimizedBlock};
 use rift_core::{CircuitInput, CircuitPublicValues};
 
-use sp1_sdk::{ExecutionReport, HashableKey, ProverClient, SP1Stdin, SP1VerifyingKey};
+use sp1_sdk::{ExecutionReport, HashableKey, ProverClient, SP1Stdin};
 
 /// The ELF (executable and linkable format) file for the Succinct RISC-V zkVM.
 pub const MAIN_ELF: &[u8] = include_bytes!("../../elf/riscv32im-succinct-zkvm-elf");
@@ -146,29 +146,29 @@ pub fn build_block_proof_input(
 
     CircuitInput::new(
         CircuitPublicValues::new(
-            [0u8; 32], // natural_txid (not used for block proof)
-            [0u8; 32], // merkle_root (not used for block proof)
-            [0u8; 32], // lp_reservation_hash (not used for block proof)
-            [0u8; 32], // order_nonce (not used for block proof)
-            0,         // lp_count (not used for block proof)
+            [0u8; 32],
+            [0u8; 32],
+            [0u8; 32],
+            [0u8; 32],
+            0,
             retarget_block
                 .header
                 .block_hash()
                 .to_byte_array()
                 .to_little_endian(),
             safe_block_height,
-            0,                       // safe_block_height_delta (not used for block proof)
-            blocks.len() as u64 - 1, // confirmation_block_height_delta
+            1,
+            blocks.len() as u64 - 2,
             blocks
                 .iter()
                 .map(|block| block.header.block_hash().to_byte_array().to_little_endian())
                 .collect(),
             chainworks,
-            false, // is_transaction_proof
+            false,
         ),
-        Vec::new(), // txn_data_no_segwit (not used for block proof)
-        Vec::new(), // merkle_proof (not used for block proof)
-        Vec::new(), // lp_reservation_data (not used for block proof)
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
         rift_optimized_blocks.to_vec(),
         retarget_block.as_rift_optimized_block(retarget_block_height),
     )

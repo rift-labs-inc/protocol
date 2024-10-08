@@ -9,6 +9,7 @@ mod integration_tests {
     use futures_util::StreamExt;
     use hypernode::constants::CHALLENGE_PERIOD_MINUTES;
     use log::info;
+    use std::sync::Once;
     use std::{collections::HashSet, sync::Arc};
     use tokio::sync::Mutex;
 
@@ -23,9 +24,12 @@ mod integration_tests {
     use rift_core::{btc_light_client::AsLittleEndianBytes, lp::LiquidityReservation};
     use test_utils::core::{get_new_core_aware_address, RiftDevnet};
     use tokio;
+    static INIT_LOGGER: Once = Once::new();
 
     async fn setup() -> Result<RiftDevnet> {
-        let _ = env_logger::init();
+        INIT_LOGGER.call_once(|| {
+            let _ = env_logger::init();
+        });
         let mock_proofs = true;
         RiftDevnet::setup(mock_proofs).await
     }
@@ -283,6 +287,42 @@ mod integration_tests {
                         devnet.rift_exchange_contract.provider().anvil_set_next_block_timestamp(future_timestamp).await?;
                         devnet.rift_exchange_contract.provider().anvil_mine(Some(U256::from(1)), None).await?;
                     }
+                }
+            };
+        }
+
+        teardown(devnet).await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_hypernode_calls_prove_blocks() -> Result<()> {
+        let devnet = setup().await?;
+        devnet.spawn_hypernode().await?;
+
+        // Setup event listeners
+        let block_proposed_filter = devnet
+            .rift_exchange_contract
+            .BitcoinChainSynced_filter()
+            .from_block(0)
+            .watch()
+            .await?;
+
+        let mut block_proposed_stream = block_proposed_filter.into_stream();
+
+        // Mine 75 blocks
+        devnet
+            .bitcoin_regtest_instance
+            .client
+            .generate_to_address(75, &devnet.miner)?;
+
+        loop {
+            info!("Waiting for BitcoinChainSynced event...");
+            tokio::select! {
+                Some(log) = block_proposed_stream.next() => {
+                    let log_data = log.clone()?;
+                    info!("BitcoinChainSynced event received. Old block height: {}, new block height: {}", log_data.0.oldBlockHeight, log_data.0.newBlockHeight);
+                    break;
                 }
             };
         }

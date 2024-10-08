@@ -2,14 +2,13 @@ use crate::error::HypernodeError;
 use crate::{hyper_err, Result};
 use bitcoin::consensus::deserialize;
 use bitcoin::Block;
-use rand::rngs::ThreadRng;
-use rand::Rng;
 use reqwest::Client;
 use serde_json::Value;
+use std::sync::{Arc, Mutex};
 
 pub struct BitcoinRpcClient {
     client: Client,
-    rng: ThreadRng,
+    id_counter: Arc<Mutex<u64>>,
     rpc_url: String,
 }
 
@@ -17,18 +16,24 @@ impl BitcoinRpcClient {
     pub fn new(rpc_url: &str) -> Self {
         Self {
             client: Client::new(),
-            rng: rand::thread_rng(),
+            id_counter: Arc::new(Mutex::new(0)),
             rpc_url: rpc_url.to_string(),
         }
     }
 
     async fn send_request(&self, method: &str, params: Value) -> Result<Value> {
+        let id = {
+            let mut counter = self.id_counter.lock().unwrap();
+            *counter += 1;
+            *counter
+        };
+
         let response = self
             .client
             .post(&self.rpc_url)
             .json(&serde_json::json!({
                 "jsonrpc": "1.0",
-                "id": self.rng.clone().gen::<u64>(),
+                "id": id,
                 "method": method,
                 "params": params
             }))
