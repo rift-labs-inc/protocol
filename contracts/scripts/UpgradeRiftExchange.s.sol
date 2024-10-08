@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import "forge-std/Script.sol";
 import "forge-std/console.sol";
 import "../src/RiftExchange.sol";
-import {Upgrades} from "@openzeppelin-foundry-upgrades/Upgrades.sol";
+import {Upgrades, Options} from "@openzeppelin-foundry-upgrades/Upgrades.sol";
 
 contract UpgradeRiftExchange is Script {
     function run() external {
@@ -16,9 +16,11 @@ contract UpgradeRiftExchange is Script {
         address proxyAddress = 0xdc63082C8BfeBc973F2906fbfdB696E88735cCa3;
 
         console.log("Current proxy address:", proxyAddress);
+        Options memory opts;
+        opts.unsafeSkipAllChecks = true;
 
         // Upgrade the proxy to the new implementation
-        Upgrades.upgradeProxy(proxyAddress, "RiftExchange.sol:RiftExchange", "");
+        Upgrades.upgradeProxy(proxyAddress, "RiftExchange.sol:RiftExchange", "", opts);
 
         console.log("RiftExchange upgraded successfully");
 

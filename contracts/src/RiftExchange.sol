@@ -38,7 +38,6 @@ interface IERC20 {
     function decimals() external view returns (uint8);
 }
 
-/// @custom:oz-upgrades-from src/RiftExchangev0.sol:RiftExchange
 contract RiftExchange is BlockHashStorageUpgradeable, OwnableUpgradeable, UUPSUpgradeable {
     // --------- TYPES --------- //
     enum ReservationState {
