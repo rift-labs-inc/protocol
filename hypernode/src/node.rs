@@ -6,6 +6,7 @@ use crate::error::HypernodeError;
 use crate::{btc_indexer, btc_rpc, evm_indexer, proof_broadcast, proof_builder};
 use crate::{evm_block_trigger, HypernodeArgs};
 use crate::{hyper_err, Result};
+use alloy::rpc::client::ClientBuilder;
 use alloy::{
     network::EthereumWallet,
     providers::{ProviderBuilder, WsConnect},
@@ -42,15 +43,20 @@ pub async fn run(args: HypernodeArgs) -> Result<()> {
         .and_then(|slice| slice.try_into().ok())
         .ok_or_else(|| hyper_err!(Parse, "Invalid private key length"))?;
 
+    let ws = WsConnect::new(&args.evm_ws_rpc);
+    let ws = crate::core::RetryWsConnect(ws);
+    let client = ClientBuilder::default()
+        .pubsub(ws)
+        .await
+        .map_err(|e| hyper_err!(Connection, "Failed to connect to WebSocket: {}", e))?;
+
     let provider: Arc<EvmWebsocketProvider> = Arc::new(
         ProviderBuilder::new()
             .with_recommended_fillers()
             .wallet(EthereumWallet::from(
                 PrivateKeySigner::from_bytes(&private_key.into()).unwrap(),
             ))
-            .on_ws(WsConnect::new(&args.evm_ws_rpc))
-            .await
-            .map_err(|e| hyper_err!(Connection, "Failed to connect to WebSocket: {}", e))?,
+            .on_client(client),
     );
 
     let contract: Arc<RiftExchangeWebsocket> =

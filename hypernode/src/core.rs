@@ -4,9 +4,14 @@ use alloy::providers::fillers::{
     ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller, WalletFiller,
 };
 use alloy::providers::RootProvider;
+use alloy::providers::WsConnect;
+use alloy::pubsub::ConnectionHandle;
+use alloy::pubsub::PubSubConnect;
 use alloy::pubsub::PubSubFrontend;
 use alloy::sol;
 use alloy::transports::http::Http;
+use alloy::transports::{impl_future, TransportResult};
+use backoff::ExponentialBackoff;
 use bitcoin::Block;
 use log::info;
 use reqwest::Client;
@@ -80,6 +85,27 @@ pub type EvmHttpProvider = FillProvider<
 pub type RiftExchangeWebsocket =
     RiftExchange::RiftExchangeInstance<PubSubFrontend, Arc<EvmWebsocketProvider>>;
 pub type RiftExchangeHttp = RiftExchange::RiftExchangeInstance<Http<Client>, Arc<EvmHttpProvider>>;
+
+/// Retrying websocket connection using exponential backoff
+#[derive(Clone, Debug)]
+pub struct RetryWsConnect(pub WsConnect);
+
+impl PubSubConnect for RetryWsConnect {
+    fn is_local(&self) -> bool {
+        self.0.is_local()
+    }
+
+    fn connect(&self) -> impl_future!(<Output = TransportResult<ConnectionHandle>>) {
+        self.0.connect()
+    }
+
+    async fn try_reconnect(&self) -> TransportResult<ConnectionHandle> {
+        backoff::future::retry(ExponentialBackoff::default(), || async {
+            Ok(self.0.try_reconnect().await?)
+        })
+        .await
+    }
+}
 
 #[derive(Clone)]
 pub struct BitcoinReservationFinalized {
