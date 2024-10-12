@@ -21,61 +21,14 @@ pub async fn run(args: HypernodeArgs) -> Result<()> {
 
     let safe_store = Arc::new(ThreadSafeStore::new());
 
-    let flashbots_url = if args.flashbots {
-        Some(
-            args.flashbots_relay_rpc
-                .as_ref()
-                .ok_or_else(|| {
-                    hyper_err!(
-                        Config,
-                        "Flashbots relay URL is required when flashbots is enabled"
-                    )
-                })?
-                .clone(),
-        )
-    } else {
-        None
-    };
-
-    let private_key: [u8; 32] = hex::decode(args.private_key.trim_start_matches("0x"))
-        .map_err(|e| hyper_err!(Parse, "Failed to decode private key: {}", e))?
-        .get(..32)
-        .and_then(|slice| slice.try_into().ok())
-        .ok_or_else(|| hyper_err!(Parse, "Invalid private key length"))?;
-
-    let ws = WsConnect::new(&args.evm_ws_rpc);
-    let ws = crate::core::RetryWsConnect(ws);
-    let client = ClientBuilder::default()
-        .pubsub(ws)
-        .await
-        .map_err(|e| hyper_err!(Connection, "Failed to connect to WebSocket: {}", e))?;
-
-    let provider: Arc<EvmWebsocketProvider> = Arc::new(
-        ProviderBuilder::new()
-            .with_recommended_fillers()
-            .wallet(EthereumWallet::from(
-                PrivateKeySigner::from_bytes(&private_key.into()).unwrap(),
-            ))
-            .on_client(client),
-    );
-
-    let contract: Arc<RiftExchangeWebsocket> =
-        Arc::new(RiftExchange::new(rift_exchange_address, provider.clone()));
-
-    let flashbots_provider: Arc<Option<EvmHttpProvider>> = Arc::new(match flashbots_url {
-        None => None,
-        Some(url) => Some(
-            ProviderBuilder::new()
-                .with_recommended_fillers()
-                .wallet(EthereumWallet::from(
-                    PrivateKeySigner::from_bytes(&private_key.into()).unwrap(),
-                ))
-                .on_http(
-                    url.parse()
-                        .map_err(|e| hyper_err!(Parse, "Failed to parse Flashbots URL: {}", e))?,
-                ),
-        ),
-    });
+    let (contract, flashbots_provider) = create_providers_and_contract(
+        &args.evm_ws_rpc,
+        &args.private_key,
+        rift_exchange_address,
+        args.flashbots,
+        args.flashbots_relay_rpc.as_deref(),
+    )
+    .await?;
 
     let btc_rpc = Arc::new(btc_rpc::BitcoinRpcClient::new(&args.btc_rpc));
 
@@ -152,4 +105,61 @@ pub async fn run(args: HypernodeArgs) -> Result<()> {
     .map_err(|e| hyper_err!(Listener, "Event listener or block listener failed: {}", e))?;
 
     Ok(())
+}
+
+async fn create_providers_and_contract(
+    evm_ws_rpc: &str,
+    private_key_hex: &str,
+    rift_exchange_address: alloy::primitives::Address,
+    flashbots_enabled: bool,
+    flashbots_relay_rpc: Option<&str>,
+) -> Result<(Arc<RiftExchangeWebsocket>, Arc<Option<EvmHttpProvider>>)> {
+    let private_key: [u8; 32] = hex::decode(private_key_hex.trim_start_matches("0x"))
+        .map_err(|e| hyper_err!(Parse, "Failed to decode private key: {}", e))?
+        .get(..32)
+        .and_then(|slice| slice.try_into().ok())
+        .ok_or_else(|| hyper_err!(Parse, "Invalid private key length"))?;
+
+    let ws = WsConnect::new(evm_ws_rpc);
+    let ws = crate::core::RetryWsConnect(ws);
+    let client = ClientBuilder::default()
+        .pubsub(ws)
+        .await
+        .map_err(|e| hyper_err!(Connection, "Failed to connect to WebSocket: {}", e))?;
+
+    let provider: Arc<EvmWebsocketProvider> = Arc::new(
+        ProviderBuilder::new()
+            .with_recommended_fillers()
+            .wallet(EthereumWallet::from(
+                PrivateKeySigner::from_bytes(&private_key.into()).unwrap(),
+            ))
+            .on_client(client),
+    );
+
+    let contract: Arc<RiftExchangeWebsocket> =
+        Arc::new(RiftExchange::new(rift_exchange_address, provider.clone()));
+
+    let flashbots_provider: Arc<Option<EvmHttpProvider>> = Arc::new(if flashbots_enabled {
+        let url = flashbots_relay_rpc.ok_or_else(|| {
+            hyper_err!(
+                Config,
+                "Flashbots relay URL is required when flashbots is enabled"
+            )
+        })?;
+        Some(
+            ProviderBuilder::new()
+                .with_recommended_fillers()
+                .wallet(EthereumWallet::from(
+                    PrivateKeySigner::from_bytes(&private_key.into()).unwrap(),
+                ))
+                .on_http(
+                    url.parse()
+                        .map_err(|e| hyper_err!(Parse, "Failed to parse Flashbots URL: {}", e))?,
+                ),
+        )
+    } else {
+        None
+    });
+
+    Ok((contract, flashbots_provider))
 }
