@@ -292,11 +292,10 @@ impl ProofBroadcastQueue {
         )?;
 
         let confirmation_block_height = safe_block_height + blocks.len() as u64 - 1;
-        let proposed_block_height = safe_block_height + 1;
+        let proposed_block_height = 0; //sentinel value
 
         // info all the inputs
         info!("safe_block_height: {}", safe_block_height);
-        info!("proposed_block_height: {}", proposed_block_height);
         info!("confirmation_block_height: {}", confirmation_block_height);
         info!("block count: {}", blocks.len());
 
@@ -319,7 +318,6 @@ impl ProofBroadcastQueue {
         let txn_calldata = contract
             .proveBlocks(
                 safe_block_height as u32,
-                proposed_block_height,
                 confirmation_block_height,
                 block_hashes,
                 chainworks,
@@ -432,7 +430,6 @@ impl ProofBroadcastQueue {
             contract
                 .buildBlockProofPublicInputs(
                     safe_block_height,
-                    proposed_block_height,
                     confirmation_block_height,
                     block_hashes.to_vec(),
                     block_chainworks.to_vec(),

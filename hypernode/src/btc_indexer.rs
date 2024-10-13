@@ -364,8 +364,8 @@ pub async fn block_listener(
     let mut total_blocks_to_sync = current_height.saturating_sub(start_block_height);
     let mut fully_synced_logged = false;
 
-    let mut last_prove_blocks_time = Instant::now() - Duration::from_secs(600);
-    const PROVE_BLOCKS_INTERVAL: Duration = Duration::from_secs(600); // 10 minutes
+    const PROVE_BLOCKS_INTERVAL: Duration = Duration::from_secs(12 * 3600); // 12 hours
+    let mut last_prove_blocks_time = Instant::now() - PROVE_BLOCKS_INTERVAL;
 
     loop {
         if current_height > analyzed_height {
@@ -451,6 +451,7 @@ pub async fn block_listener(
                 })
                 .await;
             let latest_btc_block_height = rpc.get_block_count().await?;
+            // TODO: This is a rough heuristic, better solution would be to use something evm block based, not time based
             if latest_btc_block_height.saturating_sub(latest_contract_block_height)
                 > CHECKPOINT_BLOCK_INTERVAL
             {
