@@ -147,6 +147,8 @@ impl RiftDevnet {
 
         info!("Anvil Url: {}", anvil.endpoint());
 
+        info!("Anvil WS Url: {}", anvil.ws_endpoint());
+
         // Constant miner address for test consistency
         let private_key = hex!("000000000000000000000000000000000000000000000000000000000000dead");
 
@@ -320,6 +322,7 @@ async fn spawn_anvil() -> Result<AnvilInstance> {
         Anvil::new()
             .block_time(1)
             .chain_id(1337)
+            .port(50123_u16)
             .arg("--steps-tracing")
             .arg("--timestamp")
             .arg((chrono::Utc::now().timestamp() - 9 * 60 * 60).to_string())
