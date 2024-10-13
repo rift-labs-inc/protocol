@@ -157,8 +157,8 @@ pub fn build_block_proof_input(
                 .to_byte_array()
                 .to_little_endian(),
             safe_block_height,
-            1,
             blocks.len() as u64 - 2,
+            1,
             blocks
                 .iter()
                 .map(|block| block.header.block_hash().to_byte_array().to_little_endian())

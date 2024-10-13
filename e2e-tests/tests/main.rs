@@ -303,7 +303,7 @@ mod integration_tests {
         // Setup event listeners
         let block_proposed_filter = devnet
             .rift_exchange_contract
-            .BitcoinChainSynced_filter()
+            .BlocksAdded_filter()
             .from_block(0)
             .watch()
             .await?;
@@ -321,7 +321,7 @@ mod integration_tests {
             tokio::select! {
                 Some(log) = block_proposed_stream.next() => {
                     let log_data = log.clone()?;
-                    info!("BitcoinChainSynced event received. Old block height: {}, new block height: {}", log_data.0.oldBlockHeight, log_data.0.newBlockHeight);
+                    info!("BlocksAdded event received. Start block height: {}, count: {}", log_data.0.startBlockHeight, log_data.0.count);
                     break;
                 }
             };
