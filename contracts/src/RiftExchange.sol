@@ -124,7 +124,6 @@ contract RiftExchange is BlockHashStorageUpgradeable, OwnableUpgradeable, UUPSUp
     event SwapComplete(uint256 swapReservationIndex, SwapReservation swapReservation, uint256 protocolFee);
     event LiquidityWithdrawn(uint256 indexed globalVaultIndex, uint192 amountWithdrawn, uint256 remainingBalance);
     event ProtocolFeeUpdated(uint8 newProtocolFeeBP);
-    event BitcoinChainSynced(uint256 oldBlockHeight, uint256 newBlockHeight);
 
     // --------- MODIFIERS --------- //
     modifier newDepositsNotPaused() {
@@ -405,11 +404,11 @@ contract RiftExchange is BlockHashStorageUpgradeable, OwnableUpgradeable, UUPSUp
 
     function buildBlockProofPublicInputs(
         uint32 safeBlockHeight,
-        uint64 proposedBlockHeight,
         uint64 confirmationBlockHeight,
         bytes32[] memory blockHashes,
         uint256[] memory blockChainworks
     ) public view returns (ProofPublicInputs memory) {
+        uint64 proposedBlockHeight = confirmationBlockHeight - MINIMUM_CONFIRMATION_DELTA;
         return
             ProofPublicInputs({
                 natural_txid: bytes32(0),
@@ -552,7 +551,6 @@ contract RiftExchange is BlockHashStorageUpgradeable, OwnableUpgradeable, UUPSUp
 
     function proveBlocks(
         uint32 safeBlockHeight,
-        uint64 proposedBlockHeight,
         uint64 confirmationBlockHeight,
         bytes32[] memory blockHashes,
         uint256[] memory blockChainworks,
@@ -560,22 +558,20 @@ contract RiftExchange is BlockHashStorageUpgradeable, OwnableUpgradeable, UUPSUp
     ) external {
         // [0] craft public inputs
         bytes memory publicInputs = abi.encode(
-            buildBlockProofPublicInputs(
-                safeBlockHeight,
-                proposedBlockHeight,
-                confirmationBlockHeight,
-                blockHashes,
-                blockChainworks
-            )
+            buildBlockProofPublicInputs(safeBlockHeight, confirmationBlockHeight, blockHashes, blockChainworks)
         );
 
         // [1] verify proof (will revert if invalid)
         verifierContract.verifyProof(circuitVerificationKey, publicInputs, proof);
 
         // [2] add verified blocks to block hash storage contract
-        addBlock(safeBlockHeight, proposedBlockHeight, confirmationBlockHeight, blockHashes, blockChainworks);
-
-        emit BitcoinChainSynced(safeBlockHeight, confirmationBlockHeight);
+        addBlock(
+            safeBlockHeight,
+            confirmationBlockHeight - MINIMUM_CONFIRMATION_DELTA,
+            confirmationBlockHeight,
+            blockHashes,
+            blockChainworks
+        );
     }
 
     // --------- ONLY OWNER --------- //
