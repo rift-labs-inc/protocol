@@ -80,7 +80,7 @@ forge test
 
 - Invariant 1: Unreserved balance should never exceed initial balance
 ```pseudocode
-map(reservation.initialBalance >= reservation.unreservedBalance)
+(reservation.initialBalance >= reservation.unreservedBalance for all reservations)
 ```
 
 Invariant 2: The sum of differences between initial balance and unreserved balance across all deposit vaults should equal the sum of all non-completed reserved amounts
